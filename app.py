@@ -1,95 +1,35 @@
-import os
-import sys
 import json
-from datetime import datetime
-
 import requests
-from flask import Flask, request
+from django.views.decorators.csrf import csrf_exempt
 
-app = Flask(__name__)
-
-
-@app.route('/', methods=['GET'])
-def verify():
-    # when the endpoint is registered as a webhook, it must echo back
-    # the 'hub.challenge' value it receives in the query arguments
-    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
-        if request.args.get("hub.verify_token") == '8179094981':
-           return request.args["hub.challenge"], 200
-        else:
-            return "Verification token mismatch", 403
-
-    return "Hello world", 200
+FB_MESSENGER_ACCESS_TOKEN = 8179094981
 
 
-@app.route('/', methods=['POST'])
-def webhook():
-
-    # endpoint for processing incoming messaging events
-
-    data = request.get_json()
-    log(data)  # you may not want to log every incoming message in production, but it's good for testing
-
-    if data["object"] == "page":
-
-        for entry in data["entry"]:
-            for messaging_event in entry["messaging"]:
-
-                if messaging_event.get("message"):  # someone sent us a message
-
-                    sender_id = messaging_event["sender"]["id"]        # the facebook ID of the person sending you the message
-                    recipient_id = messaging_event["recipient"]["id"]  # the recipient's ID, which should be your page's facebook ID
-                    message_text = messaging_event["message"]["text"]  # the message's text
-
-                    send_message(sender_id, "roger that!")
-
-                if messaging_event.get("delivery"):  # delivery confirmation
-                    pass
-
-                if messaging_event.get("optin"):  # optin confirmation
-                    pass
-
-                if messaging_event.get("postback"):  # user clicked/tapped "postback" button in earlier message
-                    pass
-
-    return "ok", 200
-
-
-def send_message(recipient_id, message_text):
-
-    log("sending message to {recipient}: {text}".format(recipient=recipient_id, text=message_text))
-
+def respond_FB(sender_id, text):
+    json_data = {
+        "recipient": {"id": sender_id},
+        "message": {"text": text + " to you!"}
+    }
     params = {
-        "access_token": os.environ["PAGE_ACCESS_TOKEN"]
+        "access_token": FB_MESSENGER_ACCESS_TOKEN
     }
-    headers = {
-        "Content-Type": "application/json"
-    }
-    data = json.dumps({
-        "recipient": {
-            "id": recipient_id
-        },
-        "message": {
-            "text": message_text
-        }
-    })
-    r = requests.post("https://graph.facebook.com/v2.6/me/messages", params=params, headers=headers, data=data)
-    if r.status_code != 200:
-        log(r.status_code)
-        log(r.text)
+    r = requests.post('https://graph.facebook.com/v2.6/me/messages', json=json_data, params=params)
+    print(r, r.status_code, r.text)
 
 
-def log(msg, *args, **kwargs):  # simple wrapper for logging to stdout on heroku
-    try:
-        if type(msg) is dict:
-            msg = json.dumps(msg)
-        else:
-            msg = unicode(msg).format(*args, **kwargs)
-        print(u"{}: {}".format(datetime.now(), msg))
-    except UnicodeEncodeError:
-        pass  # squash logging errors in case of non-ascii text
-    sys.stdout.flush()
+@csrf_exempt
+def fb_webhook(request):
+    if request.method == "GET":
+        if (request.GET.get('hub.verify_token') == 'this_is_a_verify_token_created_by_sean'):
+            return HttpResponse(request.GET.get('hub.challenge'))
+        return HttpResponse('Error, wrong validation token')
 
-
-if __name__ == '__main__':
-    app.run(debug=True)
+    if request.method == "POST":
+        body = request.body
+        print("BODY", body)
+        messaging_events = json.loads(body.decode("utf-8"))
+        print("JSON BODY", body)
+        sender_id = messaging_events["entry"][0]["messaging"][0]["sender"]["id"]
+        message = messaging_events["entry"][0]["messaging"][0]["message"]["text"]
+        respond_FB(sender_id, message)
+        return HttpResponse('Received.')
